@@ -250,7 +250,7 @@ class DeleteOldVersionsPage extends BuildTask
         foreach ($result as $row) {
             $id = (int) $row['RecordID'];
 
-            // new product
+            // new record ID!
             if ($id !== $currentID) {
                 $currentID = $id;
                 $prev = [];
