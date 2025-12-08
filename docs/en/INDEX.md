@@ -1,12 +1,62 @@
 # tl;dr
 
-review classes and run:
+First set the rentention rules:
+
+```yml
+
+Sunnysideup\VersionsTablePruner\Tasks\DeleteOldVersionsPage:
+  retention_rules:
+    FirstHour:
+      From: null
+      To: "1 HOUR"
+      GroupBy: "MINUTE(LastEdited)"
+
+    FirstDay:
+      From: "1 HOUR"
+      To: "1 DAY"
+      GroupBy: "HOUR(LastEdited)"
+
+    FirstThreeWeeks:
+      From: "1 DAY"
+      To: "3 WEEK"
+      GroupBy: "DATE(LastEdited)"
+
+    FirstTwelveWeeks:
+      From: "3 WEEK"
+      To: "12 WEEK"
+      GroupBy: "YEARWEEK(LastEdited)"
+
+    TwelveWeeksToThreeYears:
+      From: "12 WEEK"
+      To: "36 MONTH"
+      GroupBy: "YEAR(LastEdited), QUARTER(LastEdited)"
+
+    ThreeToSevenYears:
+      From: "36 MONTH"
+      To: "84 MONTH"
+      GroupBy: "YEAR(LastEdited), FLOOR((MONTH(LastEdited)-1)/6)"
+
+    SevenYearsPlus:
+      From: "84 MONTH"
+      To: null
+      GroupBy: "YEAR(LastEdited)"
+
+  change_tracking:
+    MyVendor\MyApp\MyProduct:
+      fields:
+        - "Price"
+      upTo: "12 MONTH"
+```
+
+then run:
 
 ```shell
 vendor/bin/sake dev/tasks/delete-old-versions-page
 ```
 
-and / or: 
+This deletes all version records based on the set retention rules
+
+you can also delete the old change sets to reduce the size of your database even more. 
 
 ```shell
 vendor/bin/sake dev/tasks/delete-old-change-sets
