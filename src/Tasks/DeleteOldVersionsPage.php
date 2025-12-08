@@ -5,11 +5,9 @@ declare(strict_types=1);
 namespace Sunnysideup\VersionsTablePruner\Tasks;
 
 use SilverStripe\CMS\Model\SiteTree;
-use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Core\ClassInfo;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\ORM\DB;
-use Sunnysideup\Ecommerce\Pages\Product;
 
 class DeleteOldVersionsPage extends BuildTask
 {
