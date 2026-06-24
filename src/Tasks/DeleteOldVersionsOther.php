@@ -4,35 +4,41 @@ declare(strict_types=1);
 
 namespace Sunnysideup\VersionsTablePruner\Tasks;
 
+use Symfony\Component\Console\Input\InputInterface;
+use SilverStripe\PolyExecution\PolyOutput;
+use Symfony\Component\Console\Command\Command;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\ORM\DB;
 
 class DeleteOldVersionsOther extends BuildTask
 {
-    protected $title = 'Cleanup old ChangeSet records';
-    protected $description = 'Deletes old ChangeSet and orphaned ChangeSetItems.';
-    private static $segment = 'delete-old-change-sets';
+    protected string $title = 'Cleanup old ChangeSet records';
 
-    public function run($request): void
+    protected static string $description = 'Deletes old ChangeSet and orphaned ChangeSetItems.';
+
+    protected static string $commandName = 'delete-old-change-sets';
+
+    protected function execute(InputInterface $input, PolyOutput $output): int
     {
-        $this->deleteOldChangeSets();
-        $this->deleteOrphanChangeSetItems();
-        $this->deleteOrphanChangeSetItemReferencedBy();
-
-        DB::alteration_message('----------------------------------');
+        $this->deleteOldChangeSets($output);
+        $this->deleteOrphanChangeSetItems($output);
+        $this->deleteOrphanChangeSetItemReferencedBy($output);
+        $output->writeln('----------------------------------');
+        return Command::SUCCESS;
     }
-    private function deleteOldChangeSets(): void
+
+    private function deleteOldChangeSets(PolyOutput $output): void
     {
-        DB::alteration_message('Deleting ChangeSets older than 3 months', 'deleted');
+        $output->writeln('Deleting ChangeSets older than 3 months');
         DB::query(
             'DELETE FROM ChangeSet
              WHERE LastEdited < DATE_SUB(NOW(), INTERVAL 3 MONTH)'
         );
     }
 
-    private function deleteOrphanChangeSetItems(): void
+    private function deleteOrphanChangeSetItems(PolyOutput $output): void
     {
-        DB::alteration_message('Deleting orphaned ChangeSetItems', 'deleted');
+        $output->writeln('Deleting orphaned ChangeSetItems');
         DB::query(
             'DELETE CSI
              FROM ChangeSetItem CSI
@@ -41,9 +47,9 @@ class DeleteOldVersionsOther extends BuildTask
         );
     }
 
-    private function deleteOrphanChangeSetItemReferencedBy(): void
+    private function deleteOrphanChangeSetItemReferencedBy(PolyOutput $output): void
     {
-        DB::alteration_message('Deleting orphaned ChangeSetItem_ReferencedBy records', 'deleted');
+        $output->writeln('Deleting orphaned ChangeSetItem_ReferencedBy records');
         DB::query(
             'DELETE CSRB
              FROM ChangeSetItem_ReferencedBy CSRB
