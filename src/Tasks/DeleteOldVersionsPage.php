@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Sunnysideup\VersionsTablePruner\Tasks;
 
+use Symfony\Component\Console\Input\InputInterface;
+use SilverStripe\PolyExecution\PolyOutput;
+use Symfony\Component\Console\Command\Command;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\ClassInfo;
 use SilverStripe\Dev\BuildTask;
@@ -11,11 +14,11 @@ use SilverStripe\ORM\DB;
 
 class DeleteOldVersionsPage extends BuildTask
 {
-    protected $title = 'Version Cleanup';
+    protected string $title = 'Version Cleanup';
 
-    protected $description = 'Keeps recent versions and gradually removes older ones based on retention periods.';
+    protected static string $description = 'Keeps recent versions and gradually removes older ones based on retention periods.';
 
-    private static string $segment = 'delete-old-versions-page';
+    protected static string $commandName = 'delete-old-versions-page';
 
     /**
      * RULES MUST BE IN ORDER FROM NEWEST → OLDEST
@@ -68,21 +71,21 @@ class DeleteOldVersionsPage extends BuildTask
         // ],
     ];
 
-    public function run($request): void
+    protected function execute(InputInterface $input, PolyOutput $output): int
     {
-        $this->makeTable();
-        $this->ensureIndexes();
-        $this->applyRetentionRules();
-        $this->applyChangeTracking();
-        $this->buildDeletionKeyTable();
-        $this->deleteOldVersions();
-
-        DB::alteration_message('Version cleanup completed.');
+        $this->makeTable($output);
+        $this->ensureIndexes($output);
+        $this->applyRetentionRules($output);
+        $this->applyChangeTracking($output);
+        $this->buildDeletionKeyTable($output);
+        $this->deleteOldVersions($output);
+        $output->writeln('Version cleanup completed.');
+        return Command::SUCCESS;
     }
 
-    private function makeTable(): void
+    private function makeTable(PolyOutput $output): void
     {
-        DB::alteration_message('Creating temporary OldPageVersions table', 'created');
+        $output->writeln('Creating temporary OldPageVersions table');
         DB::query("
             CREATE TABLE IF NOT EXISTS OldPageVersions (
                 RecordID INT NOT NULL,
@@ -95,9 +98,9 @@ class DeleteOldVersionsPage extends BuildTask
         DB::query("TRUNCATE OldPageVersions");
     }
 
-    private function ensureIndexes(): void
+    private function ensureIndexes(PolyOutput $output): void
     {
-        DB::alteration_message('Checking composite indexes on SiteTree_Versions', 'created');
+        $output->writeln('Checking composite indexes on SiteTree_Versions');
 
         $exists = DB::query("
             SELECT 1
@@ -108,7 +111,7 @@ class DeleteOldVersionsPage extends BuildTask
         ")->value();
 
         if (! $exists) {
-            DB::alteration_message('Adding composite index idx_lastedited_recordid_version', 'created');
+            $output->writeln('Adding composite index idx_lastedited_recordid_version');
 
             DB::query("
                 ALTER TABLE SiteTree_Versions
@@ -123,10 +126,10 @@ class DeleteOldVersionsPage extends BuildTask
      * RETENTION RULES
      * ========================================================== */
 
-    private function applyRetentionRules(): void
+    private function applyRetentionRules(PolyOutput $output): void
     {
         $rules = $this->config()->get('retention_rules') ?? self::$retention_rules;
-        DB::alteration_message('Applying retention rules…', 'created');
+        $output->writeln('Applying retention rules…');
         foreach ($rules as $label => $rule) {
             $from = $rule['From'] ?? null;
             $to   = $rule['To'] ?? null;
@@ -134,29 +137,31 @@ class DeleteOldVersionsPage extends BuildTask
             $conditions = [];
 
             if ($from) {
-                $conditions[] = "LastEdited < DATE_SUB(NOW(), INTERVAL {$from})";
+                $conditions[] = sprintf('LastEdited < DATE_SUB(NOW(), INTERVAL %s)', $from);
             }
 
             if ($to) {
-                $conditions[] = "LastEdited >= DATE_SUB(NOW(), INTERVAL {$to})";
+                $conditions[] = sprintf('LastEdited >= DATE_SUB(NOW(), INTERVAL %s)', $to);
             }
 
             $where = implode(' AND ', $conditions) ?: null;
             $groupBy = $rule['GroupBy'];
 
-            DB::alteration_message("… Retention: {$label} (GroupBy: {$groupBy})", 'created');
+            $output->writeln(sprintf('… Retention: %s (GroupBy: %s)', $label, $groupBy));
             if (! $where) {
-                DB::alteration_message("… …  - No conditions, applying to all records", 'created');
+                $output->writeln("… …  - No conditions, applying to all records");
                 continue;
             } else {
-                DB::alteration_message("… …  - Conditions: {$where}", 'created');
+                $output->writeln('… …  - Conditions: ' . $where);
             }
+
             if (! $groupBy) {
-                DB::alteration_message("… …  - No GroupBy specified, skipping", 'created');
+                $output->writeln("… …  - No GroupBy specified, skipping");
                 continue;
             } else {
-                DB::alteration_message("… …  - GroupBy: {$groupBy}", 'created');
+                $output->writeln('… …  - GroupBy: ' . $groupBy);
             }
+
             DB::query("
                 INSERT IGNORE INTO OldPageVersions (RecordID, Version)
                 SELECT RecordID, MAX(Version)
@@ -173,38 +178,40 @@ class DeleteOldVersionsPage extends BuildTask
      * CHANGE TRACKING
      * ========================================================== */
 
-    private function applyChangeTracking(): void
+    private function applyChangeTracking(PolyOutput $output): void
     {
-        DB::alteration_message('Applying change tracking rules…', 'created');
+        $output->writeln('Applying change tracking rules…');
         $configs = $this->config()->get('change_tracking') ?? self::$change_tracking;
 
         foreach ($configs as $className => $settings) {
             $table = $this->getVersionsTable($className);
 
             $this->addChangeKeepsForTable(
+                $output,
                 $table,
                 (array) ($settings['fields'] ?? []),
                 (string) ($settings['upTo'] ?? null)
             );
         }
     }
-    private function addChangeKeepsForTable(string $table, array $fields, ?string $upTo): void
+
+    private function addChangeKeepsForTable(PolyOutput $output, string $table, array $fields, ?string $upTo): void
     {
         if (! $this->tableExists($table)) {
-            DB::alteration_message("… Skipping {$table}: does not exist", 'deleted');
+            $output->writeln(sprintf('… Skipping %s: does not exist', $table));
             return;
         }
 
         if ($fields === []) {
-            DB::alteration_message("… Skipping {$table}: no fields configured", 'deleted');
+            $output->writeln(sprintf('… Skipping %s: no fields configured', $table));
             return;
         }
 
-        DB::alteration_message("… Scanning {$table} for field changes: " . implode(', ', $fields), 'created');
+        $output->writeln(sprintf('… Scanning %s for field changes: ', $table) . implode(', ', $fields));
 
         // WHERE clause
         $where = $upTo
-            ? "WHERE stv.LastEdited >= DATE_SUB(NOW(), INTERVAL {$upTo})"
+            ? sprintf('WHERE stv.LastEdited >= DATE_SUB(NOW(), INTERVAL %s)', $upTo)
             : '';
 
         // Select LastEdited depending on table
@@ -258,13 +265,14 @@ class DeleteOldVersionsPage extends BuildTask
                 foreach ($fields as $field) {
                     $prev[$field] = $row[$field] ?? null;
                 }
+
                 continue;
             }
 
             $changed = false;
             foreach ($fields as $field) {
                 if (($row[$field] ?? null) !== ($prev[$field] ?? null)) {
-                    DB::alteration_message("… … Found change in {$id} for field {$field}", 'created');
+                    $output->writeln(sprintf('… … Found change in %d for field %s', $id, $field));
 
                     $changed = true;
                     break;
@@ -287,7 +295,7 @@ class DeleteOldVersionsPage extends BuildTask
 
     private function bufferAdd(array &$buffer, int &$bufferSize, int $recordId, int $version): void
     {
-        $buffer[] = "({$recordId}, {$version})";
+        $buffer[] = sprintf('(%d, %d)', $recordId, $version);
         $bufferSize++;
 
         if ($bufferSize >= 500) {
@@ -315,9 +323,9 @@ class DeleteOldVersionsPage extends BuildTask
      * DELETE OLD VERSIONS
      * ========================================================== */
 
-    private function deleteOldVersions(): void
+    private function deleteOldVersions(PolyOutput $output): void
     {
-        DB::alteration_message('Deleting old versions…', 'deleted');
+        $output->writeln('Deleting old versions…');
 
         $classes = ClassInfo::subclassesFor(SiteTree::class);
         unset($classes[SiteTree::class]);
@@ -329,16 +337,17 @@ class DeleteOldVersionsPage extends BuildTask
                 continue;
             }
 
-            DB::alteration_message("Cleaning {$table}", 'deleted');
+            $output->writeln('Cleaning ' . $table);
 
-            $this->deleteTableUsingKeyset($table);
+            $this->deleteTableUsingKeyset($output, $table);
         }
+
         DB::query('DROP TABLE IF EXISTS PageVersionsToDelete');
     }
 
-    private function buildDeletionKeyTable(): void
+    private function buildDeletionKeyTable(PolyOutput $output): void
     {
-        DB::alteration_message('Preparing permanent deletion keyset table…', 'created');
+        $output->writeln('Preparing permanent deletion keyset table…');
 
         // Drop old table if present
         DB::query('DROP TABLE IF EXISTS PageVersionsToDelete');
@@ -352,7 +361,7 @@ class DeleteOldVersionsPage extends BuildTask
             ) ENGINE=InnoDB
         ");
 
-        DB::alteration_message('Populating deletion keyset…', 'created');
+        $output->writeln('Populating deletion keyset…');
 
         DB::query("
             INSERT INTO PageVersionsToDelete (RecordID, Version)
@@ -368,12 +377,12 @@ class DeleteOldVersionsPage extends BuildTask
             SELECT COUNT(*) AS C FROM PageVersionsToDelete
         ")->value();
 
-        DB::alteration_message("Deletion keyset ready: {$count} rows", 'created');
+        $output->writeln(sprintf('Deletion keyset ready: %d rows', $count));
     }
 
-    private function deleteTableUsingKeyset(string $table, int $batchSize = 500000): void
+    private function deleteTableUsingKeyset(PolyOutput $output, string $table, int $batchSize = 500000): void
     {
-        DB::alteration_message("Cleaning {$table}…", 'deleted');
+        $output->writeln(sprintf('Cleaning %s…', $table));
 
         $total = 0;
 
@@ -394,14 +403,13 @@ class DeleteOldVersionsPage extends BuildTask
 
         $total += $deleted;
 
-        DB::alteration_message(
-            "… {$deleted} removed (total {$total}) from {$table}",
-            'deleted'
+        $output->writeln(
+            sprintf('… %d removed (total %d) from %s', $deleted, $total, $table)
         );
 
         usleep(20000);
 
-        DB::alteration_message("Finished {$table}: {$total} deleted", 'deleted');
+        $output->writeln(sprintf('Finished %s: %d deleted', $table, $total));
     }
 
 
@@ -412,7 +420,7 @@ class DeleteOldVersionsPage extends BuildTask
             return null;
         }
 
-        $table = "{$base}_Versions";
+        $table = $base . '_Versions';
 
         $exists = $this->tableExists($table);
 
@@ -421,7 +429,7 @@ class DeleteOldVersionsPage extends BuildTask
 
     private function tableExists(string $tableName): bool
     {
-        $exists = DB::query("SHOW TABLES LIKE '{$tableName}'")->value();
+        $exists = DB::query(sprintf("SHOW TABLES LIKE '%s'", $tableName))->value();
 
         return (bool) $exists;
     }
